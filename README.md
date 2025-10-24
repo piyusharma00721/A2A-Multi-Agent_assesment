@@ -1,237 +1,128 @@
-# Multi-Agent Query Router (A2A Assessment)
+# Multi-Agent Intelligent Assistant
 
-A proof-of-concept multi-agent system that intelligently routes user queries to specialized agents for web search and file analysis, then synthesizes coherent responses.
+[![Streamlit](https://img.shields.io/badge/Streamlit-FF6B35?logo=streamlit&logoColor=white)](https://streamlit.io/) [![LangChain](https://img.shields.io/badge/LangChain-8E44AD?logo=langchain&logoColor=white)](https://langchain.com/) [![Gemini](https://img.shields.io/badge/Gemini-4285F4?logo=google&logoColor=white)](https://ai.google.dev/) [![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)](https://python.org/)
 
-## 🎯 Overview
+A multi-agent system built with Streamlit, LangChain, and LangGraph for intelligent query routing between web search and file analysis agents. Powered by Google Gemini for LLM tasks, with robust vector stores for RAG (Retrieval-Augmented Generation) on uploaded files like PDFs and images.
 
-This system demonstrates an intelligent assistant that can handle diverse information requests by employing a multi-agent architecture. It routes queries to appropriate specialized agents and synthesizes comprehensive answers.
+This project demonstrates a production-ready prototype for handling diverse user queries: factual web searches (e.g., "Who won the last Champions Trophy?") and file-based Q&A (e.g., "Summarize this resume").
 
-## 🏗️ Architecture
+## Features
+- **Query Routing**: LLM-based router (Gemini) classifies queries to web search or file analysis.
+- **Web Search Agent**: Multi-backend support (Serper for Google SERP, Wikipedia API, DuckDuckGo) with LLM-parsed crawling fallback for robust results.
+- **File Analysis Agent**: RAG with Hugging Face embeddings (free, local) and RetrievalQA chain for PDFs, TXT, CSV, images (with multi-modal Gemini for images).
+- **Streamlit UI**: Chat interface with sidebar for recent chats/files, drag-and-drop upload, and real-time status.
+- **Logging & Debugging**: Detailed step-by-step logs in terminal (`logs/assistant_YYYYMMDD.log`).
+- **Modular Design**: Easy to extend agents/backends; session-based state for multi-turn chats.
 
-### Core Components
+## Quick Start
+1. Clone the repo: `git clone https://github.com/piyusharma00721/A2A-Multi-Agent_assesment.git`
+2. Install dependencies: `pip install -r requirements.txt`
+3. Set up `.env`: Copy `.env.example` to `.env` and add your `GOOGLE_API_KEY` (from [Google AI Studio](https://aistudio.google.com/app/apikey)).
+4. Run: `streamlit run app.py`
+5. Open [http://localhost:8501](http://localhost:8501) and test queries!
 
-- **Router Node**: Uses Google Gemini to classify queries and select appropriate agents
-- **Web Search Agent**: Retrieves current information using DuckDuckGo API
-- **File Analysis Agent**: Processes multi-modal files (PDF, images, spreadsheets) using RAG
-- **Synthesizer**: Combines agent outputs into coherent responses
-- **Orchestrator**: Manages workflow using LangGraph
-
-### Technology Stack
-
-- **LLM**: Google Gemini Pro
-- **Orchestration**: LangGraph + LangChain
-- **Search**: DuckDuckGo Search API
-- **File Processing**: PyMuPDF, Tesseract OCR, Pandas
-- **Vector Storage**: FAISS
-- **Embeddings**: HuggingFace Sentence Transformers
-
-## 🚀 Quick Start
-
+## Installation
 ### Prerequisites
+- Python 3.10+ (recommended: 3.11 for performance).
+- Git for cloning.
 
-- Python 3.8+
-- Google Gemini API key
+### Steps
+1. **Clone Repository**:
+   ```
+   git clone https://github.com/piyusharma00721/A2A-Multi-Agent_assesment.git
+   cd A2A-Multi-Agent_assesment
+   ```
 
-### Installation
+2. **Create Virtual Environment** (recommended):
+   ```
+   python -m venv venv
+   # Windows:
+   venv\Scripts\activate
+   # macOS/Linux:
+   source venv/bin/activate
+   ```
 
-1. **Clone and setup**:
-```bash
-git clone <repository>
-cd multi-agent-query-router
-python setup.py
-```
+3. **Install Dependencies**:
+   ```
+   pip install -r requirements.txt
+   ```
 
-2. **Configure environment**:
-```bash
-cp .env.template .env
-# Edit .env and add your GOOGLE_API_KEY
-```
+4. **System Dependencies for PDF Processing**:
+   - **poppler-utils**: For PDF text extraction.
+     - Windows: Download from [poppler-windows](https://github.com/oschwartz10612/poppler-windows/releases), extract, add `bin/` to PATH.
+     - macOS: `brew install poppler`
+     - Linux: `sudo apt install poppler-utils`
+   - **Tesseract OCR** (for scanned PDFs): 
+     - Windows: Install from [Tesseract at UB Mannheim](https://github.com/UB-Mannheim/tesseract/wiki), add to PATH.
+     - macOS: `brew install tesseract`
+     - Linux: `sudo apt install tesseract-ocr`
 
-3. **Install dependencies**:
-```bash
-pip install -r requirements.txt
-```
-
-### Usage
-
-#### Interactive Mode
-```bash
-python main.py --interactive
-```
-
-#### Single Query
-```bash
-python main.py "What is the capital of France?"
-```
-
-#### With Files
-```bash
-python main.py "Summarize this document" -f document.pdf
-```
-
-#### View Statistics
-```bash
-python main.py --stats
-```
-
-## 📋 Sample Queries
-
-### Web Search Queries
-- "What is the capital of France?"
-- "Who won the last FIFA World Cup?"
-- "What is the current weather in Tokyo?"
-
-### File Analysis Queries
-- "Summarize the key findings in this document: [PDF]"
-- "Find all mentions of 'quantum computing' in this text file: [TXT]"
-- "Describe the main subject in this image: [IMAGE]"
-
-### Combined Queries
-- "Compare this document with current news about the topic"
-- "Find recent information about the subject in this file"
-
-## 🔧 Configuration
+5. **Optional API Keys for Enhanced Search**:
+   - `SERPER_API_KEY`: Free Google SERP fallback (2,500/month) from [serper.dev](https://serper.dev). Add to `.env`.
 
 ### Environment Variables
-```bash
-GOOGLE_API_KEY=your_gemini_api_key_here
-MAX_SEARCH_RESULTS=5
-CHUNK_SIZE=1500
-CHUNK_OVERLAP=200
+Create `.env` in the root directory:
+```
+GOOGLE_API_KEY=your_gemini_api_key_here  # Required for Gemini LLM
+SERPER_API_KEY=your_serper_key_here      # Optional for Google search fallback
+```
+- Load with `python-dotenv` (automatic in code).
+- **Security**: Add `.env` to `.gitignore`.
+
+## Usage
+1. **Launch UI**: `streamlit run app.py`
+2. **Web Search**: Type "who won the last champions trophy?" → Routes to web agent, returns "India (2025)" via Serper/Wikipedia.
+3. **File Analysis**:
+   - Upload PDF/TXT/CSV/image via drag-and-drop.
+   - Query "how many total experience does the candidate have?" → Routes to file agent, uses RAG to summarize from resume.
+4. **Sidebar**: View/manage recent chats and uploaded files (with remove button).
+5. **Logs**: Check terminal or `logs/assistant_YYYYMMDD.log` for debugging (e.g., routing decisions).
+
+### Example Queries
+- **Web**: "What is the current weather in Tokyo?" (crawls weather.com, parses with Gemini).
+- **File**: Upload resume PDF + "Summarize Piyush's skills" (retrieves chunks, generates cited response).
+
+## Project Structure
+```
+A2A-Multi-Agent_assesment/
+├── app.py                          # Streamlit UI entry point
+├── requirements.txt                # Dependencies
+├── .env.example                    # Template for env vars
+├── .gitignore                      # Ignore .env, logs, etc.
+├── orchestrator/
+│   └── graph.py                    # LangGraph workflow (routing + agents)
+├── agents/
+│   ├── router_agent.py             # LLM-based query classifier
+│   ├── web_search_agent.py         # Multi-backend search + crawl
+│   ├── file_analysis_agent.py      # RetrievalQA for file RAG
+│   └── synthesizer_agent.py        # Final response synthesis
+└── utils/
+    ├── logger.py                   # Custom logging
+    └── vector_store.py             # FAISS + Hugging Face embeddings
 ```
 
-### Supported File Types
-- **Text**: `.txt`
-- **PDF**: `.pdf`
-- **Images**: `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`
-- **Spreadsheets**: `.csv`, `.xlsx`, `.xls`
+## Troubleshooting
+- **API Key Error**: Ensure `GOOGLE_API_KEY` in `.env` and `load_dotenv()` called early (in `graph.py`).
+- **PDF Upload Fails ("poppler not found")**: Install poppler-utils and add to PATH; restart terminal.
+- **Scanned PDF (0 docs extracted)**: Install Tesseract OCR; code falls back automatically.
+- **Web Search Rate Limit**: Use Serper key for better reliability; wait 1-2 mins for DDG resets.
+- **Import Errors**: Run `pip install -r requirements.txt --upgrade`; check versions.
+- **No Vector Store**: Re-upload file; check logs for extraction count (e.g., "Loaded 0 docs" means scanned PDF).
 
-## 📊 System Features
+For issues, check logs or open an issue on GitHub.
 
-### Query Routing Intelligence
-- LLM-based classification with fallback rules
-- Handles web search, file analysis, and combined queries
-- Explains routing decisions
+## Contributing
+1. Fork the repo.
+2. Create a branch: `git checkout -b feature-branch`.
+3. Commit changes: `git commit -m "Add feature"`.
+4. Push: `git push origin feature-branch`.
+5. Open a Pull Request.
 
-### Web Search Capabilities
-- General web search and news search
-- Key information extraction
-- Source citation and ranking
+Contributions welcome! Focus on new agents, UI enhancements, or backend integrations.
 
-### Multi-Modal File Analysis
-- Text extraction from various formats
-- OCR for image processing
-- RAG-based information retrieval
-- Similarity search with FAISS
-
-### Response Synthesis
-- Context-aware response generation
-- Citation extraction and formatting
-- Confidence scoring
-- Error handling and graceful degradation
-
-### Logging and Monitoring
-- JSON-based request/response logging
-- Performance metrics tracking
-- System statistics and analytics
-- Error tracking and debugging
-
-## 🧪 Testing
-
-Run the test suite:
-```bash
-python tests/test_queries.py
-```
-
-Test coverage includes:
-- Query classification accuracy
-- Agent functionality
-- File processing capabilities
-- Response synthesis
-- Error handling
-
-## 📈 Performance Metrics
-
-### Target Performance
-- Router classification: < 2 seconds
-- Web search: < 5 seconds
-- File processing: < 10 seconds
-- Total end-to-end: < 15 seconds
-
-### Evaluation Criteria
-- **Routing Accuracy**: ≥80% on test prompts
-- **Answer Relevance**: Manual validation
-- **Latency**: ≤10s end-to-end per query
-- **Resilience**: Graceful error handling
-
-## 🏛️ Project Structure
-
-```
-multi-agent-query-router/
-├── agents/                 # Agent implementations
-│   ├── router.py          # Query classification
-│   ├── web_search_agent.py # Web search functionality
-│   ├── file_analysis_agent.py # File processing & RAG
-│   └── synthesizer.py     # Response synthesis
-├── utils/                 # Utility modules
-│   └── logger.py         # Logging system
-├── tests/                # Test cases
-│   └── test_queries.py   # Comprehensive tests
-├── test_files/           # Sample files for testing
-├── outputs/              # Logs and results
-├── orchestrator.py       # LangGraph workflow
-├── config.py            # Configuration management
-├── main.py              # Main application interface
-├── setup.py             # Setup script
-└── requirements.txt     # Dependencies
-```
-
-## 🔍 Key Design Decisions
-
-### 1. Multi-Agent Architecture
-- **Rationale**: Specialized agents for different query types
-- **Benefits**: Modularity, scalability, maintainability
-
-### 2. LLM-Based Routing
-- **Rationale**: Intelligent query classification
-- **Benefits**: Handles complex routing scenarios, explainable decisions
-
-### 3. RAG for File Analysis
-- **Rationale**: Efficient information retrieval from documents
-- **Benefits**: Semantic search, relevance ranking, context preservation
-
-### 4. LangGraph Orchestration
-- **Rationale**: Complex workflow management
-- **Benefits**: State management, conditional routing, error handling
-
-### 5. JSON Logging
-- **Rationale**: Structured data for analysis
-- **Benefits**: Easy parsing, debugging, performance monitoring
-
-## 🚧 Limitations & Future Work
-
-### Current Limitations
-- In-memory vector storage (not persistent)
-- Single-threaded processing
-- Basic error recovery
-- Limited file size (10MB max)
-
-### Future Enhancements
-- FastAPI web interface
-- Distributed vector storage
-- Advanced RAG techniques
-- Real-time streaming
-- Multi-language support
-- Integration with knowledge bases
-
-## 📝 License
-
-This project is created for assessment purposes. Please ensure you have appropriate licenses for all dependencies and APIs used.
-
-## 🤝 Contributing
-
-This is an assessment project. For questions or issues, please refer to the documentation or create an issue in the repository.
+## License
+MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 
-**Note**: This is a proof-of-concept implementation focused on demonstrating architectural principles and technical capabilities rather than production-ready features.
+*Built with ❤️ by Piyush Sharma. Questions? [Open an issue](https://github.com/piyusharma00721/A2A-Multi-Agent_assesment/issues).*

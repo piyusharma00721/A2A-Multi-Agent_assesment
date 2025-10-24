@@ -4,7 +4,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.document_loaders import (
     UnstructuredPDFLoader,
-    PyPDFLoader,  # Fallback
+    PyPDFLoader,
     TextLoader,
     CSVLoader,
     UnstructuredImageLoader
@@ -13,6 +13,15 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from utils.logger import log_step
 import os
+import subprocess
+try:
+    import pytesseract
+    from pdf2image import convert_from_path
+    from PIL import Image
+except ImportError:
+    pytesseract = None
+    convert_from_path = None
+    Image = None
 
 logger = logging.getLogger(__name__)
 
@@ -21,22 +30,56 @@ class VectorStoreManager:
         self.embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2"
         )
-        self.vector_stores = {}  # file_name -> FAISS index
-        self.documents = {}  # file_name -> list of full doc contents
-        self.fallback_texts = {}  # file_name -> full text for keyword fallback
+        self.vector_stores = {}
+        self.documents = {}
+        self.fallback_texts = {}
+
+    def _check_poppler(self) -> bool:
+        """Check if poppler is installed and in PATH."""
+        try:
+            subprocess.run(["pdfinfo", "--version"], capture_output=True, check=True)
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            log_step("VectorStore._check_poppler", "poppler-utils not found in PATH")
+            return False
+
+    def _ocr_pdf(self, file_path: str) -> List[Document]:
+        """Perform OCR on PDF if poppler fails and Tesseract is available."""
+        if not pytesseract or not convert_from_path or not Image:
+            raise ValueError("Tesseract, pdf2image, and PIL required for OCR. Install 'pytesseract', 'pdf2image', and 'pillow'.")
+        
+        log_step("VectorStore._ocr_pdf", f"Attempting OCR on {file_path}")
+        try:
+            images = convert_from_path(file_path)
+            docs = []
+            for i, image in enumerate(images):
+                text = pytesseract.image_to_string(image)
+                if text.strip():
+                    docs.append(Document(page_content=text, metadata={"page": i}))
+            log_step("VectorStore._ocr_pdf", f"Extracted {len(docs)} pages via OCR")
+            return docs if docs else []
+        except Exception as e:
+            log_step("VectorStore._ocr_pdf", f"OCR failed: {str(e)}")
+            raise ValueError(f"OCR failed for {file_path}: {str(e)}")
 
     def load_and_embed_file(self, file_path: str, file_name: str) -> bool:
         log_step("VectorStore.load_and_embed_file", f"Starting processing for {file_name}")
         
         try:
-            # Try UnstructuredPDFLoader first
             if file_name.endswith('.pdf'):
-                try:
-                    loader = UnstructuredPDFLoader(file_path, mode="single")
-                    log_step("VectorStore.load_and_embed_file", f"Using UnstructuredPDFLoader for {file_name}")
-                except ImportError as e:
-                    log_step("VectorStore.load_and_embed_file", f"UnstructuredPDFLoader failed: {str(e)}. Falling back to PyPDFLoader.")
-                    loader = PyPDFLoader(file_path)
+                if self._check_poppler():
+                    try:
+                        loader = UnstructuredPDFLoader(file_path, mode="single")
+                        log_step("VectorStore.load_and_embed_file", f"Using UnstructuredPDFLoader for {file_name}")
+                    except Exception as e:
+                        log_step("VectorStore.load_and_embed_file", f"UnstructuredPDFLoader failed: {str(e)}. Falling back to PyPDFLoader.")
+                        loader = PyPDFLoader(file_path)
+                else:
+                    if pytesseract and convert_from_path and Image:
+                        docs = self._ocr_pdf(file_path)
+                        loader = None  # Use OCR docs directly
+                    else:
+                        raise ValueError("poppler not found and OCR not configured. Install poppler-utils or Tesseract/pdf2image.")
             elif file_name.endswith('.txt'):
                 loader = TextLoader(file_path)
             elif file_name.endswith(('.csv', '.xlsx')):
@@ -46,18 +89,16 @@ class VectorStoreManager:
             else:
                 raise ValueError(f"Unsupported file type: {file_name}")
             
-            docs = loader.load()
+            docs = loader.load() if loader else docs
             log_step("VectorStore.load_and_embed_file", f"Loader extracted {len(docs)} documents for {file_name}")
             
             if not docs:
-                raise ValueError(f"No content extracted from {file_name}. If scanned PDF, use OCR or text version.")
+                raise ValueError(f"No content extracted from {file_name}. If scanned PDF, ensure OCR is set up with Tesseract.")
             
-            # Store full text for fallback
             full_text = " ".join([doc.page_content for doc in docs])
             self.fallback_texts[file_name] = full_text
             log_step("VectorStore.load_and_embed_file", f"Stored full text ({len(full_text)} chars) for fallback")
             
-            # Split and embed
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
             splits = text_splitter.split_documents(docs)
             log_step("VectorStore.load_and_embed_file", f"Split into {len(splits)} chunks for {file_name}")
@@ -74,7 +115,7 @@ class VectorStoreManager:
                 
         except Exception as e:
             log_step("VectorStore.load_and_embed_file", f"ERROR processing {file_name}: {str(e)}")
-            raise ValueError(f"Failed to load {file_name}: {str(e)}. Try a text-based file for testing.")
+            raise ValueError(f"Failed to load {file_name}: {str(e)}. Try a text-based file or install poppler/Tesseract for PDFs.")
 
     def retrieve_relevant_docs(self, query: str, file_name: str, k: int = 4) -> List[Dict]:
         log_step("VectorStore.retrieve_relevant_docs", f"Retrieving for query '{query}' from {file_name}")

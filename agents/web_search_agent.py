@@ -1,4 +1,5 @@
 from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_community.utilities import WikipediaAPIWrapper, GoogleSerperAPIWrapper
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.output_parsers import StrOutputParser
@@ -9,131 +10,148 @@ import os
 import time
 import re
 from typing import Optional, Dict
+import random  # For jitter
+from bs4 import BeautifulSoup  # HTML cleaning
 
 logger = logging.getLogger(__name__)
 
-class WebSearchError(Exception):
-    """Custom exception for web search failures."""
+class SearchBackendError(Exception):
+    """Custom exception for search backend failures."""
     pass
+
+class SerperBackend:
+    """Serper (Google SERP) backend - free tier: 2,500/month."""
+    def __init__(self, api_key: str):
+        self.search = GoogleSerperAPIWrapper(serper_api_key=api_key)
+
+    def search(self, query: str) -> str:
+        return self.search.run(query)
+
+class WikipediaBackend:
+    """Wikipedia API backend - completely free."""
+    def __init__(self):
+        self.search = WikipediaAPIWrapper()
+
+    def search(self, query: str) -> str:
+        return self.search.run(query)
+
+class DuckDuckGoBackend:
+    """DuckDuckGo backend."""
+    def __init__(self):
+        self.search = DuckDuckGoSearchRun()
+
+    def search(self, query: str) -> str:
+        return self.search.run(query)
 
 class WebSearchAgent:
     def __init__(self, api_key: Optional[str] = None, max_retries: int = 3, crawl_timeout: int = 10):
-        """Initialize with configurable parameters.
-        Args:
-            api_key (str, optional): Google API key. Defaults to env var.
-            max_retries (int): Max retry attempts for DDG searches.
-            crawl_timeout (int): Timeout in seconds for web crawling.
-        """
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
         if not self.api_key:
-            raise ValueError("GOOGLE_API_KEY not found in environment variables.")
+            raise ValueError("GOOGLE_API_KEY not found.")
         
         self.max_retries = max_retries
         self.crawl_timeout = crawl_timeout
-        self.search = DuckDuckGoSearchRun()
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
             temperature=0,
             google_api_key=self.api_key
         )
         self.prompt = ChatPromptTemplate.from_template(
-            """Using the search results or crawled content: {results}
+            """Using the search results or parsed content: {results}
             Answer the query: {query}
-            Be concise and accurate. For live data like weather, prioritize current details."""
+            Be concise and accurate."""
         )
         self.chain = self.prompt | self.llm | StrOutputParser()
-        # Configurable source domains for crawling
+        
+        # Backends (priority: Serper > Wikipedia > DDG)
+        self.backends = []
+        if os.getenv("SERPER_API_KEY"):
+            self.backends.append(SerperBackend(os.getenv("SERPER_API_KEY")))
+        self.backends.append(WikipediaBackend())
+        self.backends.append(DuckDuckGoBackend())
+        
+        # LLM parser for crawled content
+        self.parse_prompt = ChatPromptTemplate.from_template(
+            """Extract key facts relevant to '{query}' from this page content. Ignore ads, navigation, and irrelevant sections. Summarize concisely in bullet points.
+            Content: {content}
+            Relevant facts:"""
+        )
+        self.parse_chain = self.parse_prompt | self.llm | StrOutputParser()
+        
+        # Static crawl URLs for reliability
         self.crawl_sources = {
-            "weather": ["weather.com", "accuweather.com"],
-            "sports": ["espn.com", "bbc.com/sport"],
-            "general": ["en.wikipedia.org"]
+            "champions trophy": "https://en.wikipedia.org/wiki/List_of_ICC_Champions_Trophy_finals",
+            "weather": "https://weather.com/weather/today/l/TOXX0034:1:TO",  # Tokyo; customize
+            "general": "https://en.wikipedia.org/wiki/Main_Page"
         }
 
-    def _perform_ddg_search(self, query: str) -> str:
-        """Perform DDG search with retry logic."""
-        for attempt in range(self.max_retries):
-            try:
-                log_step("WebSearchAgent._perform_ddg_search", f"Attempt {attempt + 1}/{self.max_retries} for: {query}")
-                results = self.search.run(query)
-                if results and len(results.strip()) > 50:  # Quality check
-                    log_step("WebSearchAgent._perform_ddg_search", "DDG search successful")
-                    return results
-                else:
-                    raise WebSearchError("Empty or irrelevant DDG results")
-            except WebSearchError as e:
-                if attempt < self.max_retries - 1:
-                    wait_time = (2 ** attempt) + 1  # Exponential backoff: 3s, 5s, 9s
-                    log_step("WebSearchAgent._perform_ddg_search", f"Retrying due to: {str(e)}. Waiting {wait_time}s...")
-                    time.sleep(wait_time)
-                else:
-                    log_step("WebSearchAgent._perform_ddg_search", f"DDG failed after {self.max_retries} attempts: {str(e)}")
-                    raise
-            except Exception as e:
-                log_step("WebSearchAgent._perform_ddg_search", f"Unexpected error: {str(e)}")
-                raise WebSearchError(f"DDG search failed: {str(e)}")
+    def _perform_search(self, query: str) -> str:
+        """Try backends with retries."""
+        for backend in self.backends:
+            backend_name = backend.__class__.__name__
+            for attempt in range(self.max_retries):
+                try:
+                    log_step("WebSearchAgent._perform_search", f"{backend_name} attempt {attempt + 1} for: {query}")
+                    results = backend.search(query)
+                    if results and len(results.strip()) > 50:
+                        log_step("WebSearchAgent._perform_search", f"{backend_name} succeeded")
+                        return results
+                    raise SearchBackendError("Short results")
+                except SearchBackendError:
+                    if attempt < self.max_retries - 1:
+                        wait_time = (2 ** attempt) + random.uniform(0, 1)
+                        time.sleep(wait_time)
+                    continue
+                except Exception as e:
+                    log_step("WebSearchAgent._perform_search", f"{backend_name} error: {str(e)}")
+                    continue
+        raise SearchBackendError("All backends failed")
 
     def _select_crawl_url(self, query: str) -> str:
-        """Select an appropriate URL for crawling based on query context."""
-        log_step("WebSearchAgent._select_crawl_url", f"Selecting URL for query: {query}")
-        keywords = query.lower().split()
-        if any(word in keywords for word in ["weather", "forecast"]):
-            source_list = self.crawl_sources["weather"]
-        elif any(word in keywords for word in ["sport", "fifa", "winner"]):
-            source_list = self.crawl_sources["sports"]
+        """Select targeted URL."""
+        keywords = query.lower()
+        if "champions trophy" in keywords:
+            return self.crawl_sources["champions trophy"]
+        elif "weather" in keywords:
+            return self.crawl_sources["weather"]
         else:
-            source_list = self.crawl_sources["general"]
-        
-        # Quick DDG search for URL
-        try:
-            url_query = f"{query} site:{' OR site:'.join(source_list)}"
-            url_results = self.search.run(url_query, max_results=1)
-            url_match = re.search(r'https?://[^\s<>"]+', url_results)
-            return url_match.group(0) if url_match else f"https://{source_list[0]}/wiki/{query.replace(' ', '_')}"
-        except Exception as e:
-            log_step("WebSearchAgent._select_crawl_url", f"URL selection failed: {str(e)}")
-            return f"https://{source_list[0]}/search?q={query.replace(' ', '+')}"
+            return self.crawl_sources["general"]
 
-    def _crawl_content(self, url: str) -> str:
-        """Crawl content from a given URL with timeout."""
-        log_step("WebSearchAgent._crawl_content", f"Attempting to crawl: {url}")
+    def _crawl_and_parse(self, url: str, query: str) -> str:
+        """Crawl, clean, and parse with LLM."""
+        log_step("WebSearchAgent._crawl_and_parse", f"Crawling {url}")
         try:
             loader = WebBaseLoader(url)
             loader.requests_timeout = self.crawl_timeout
             docs = loader.load()
-            if docs:
-                content = docs[0].page_content[:2000]  # Truncate to avoid token limits
-                log_step("WebSearchAgent._crawl_content", "Crawl successful")
-                return f"Crawled from {url}: {content}"
-            raise WebSearchError("No content extracted from crawl")
+            raw_content = docs[0].page_content if docs else ""
+            
+            # Clean with BeautifulSoup
+            soup = BeautifulSoup(raw_content, 'html.parser')
+            text_content = soup.get_text(separator=' ', strip=True)[:3000]
+            
+            if not text_content:
+                raise SearchBackendError("No content")
+            
+            # LLM parse
+            parsed = self.parse_chain.invoke({"query": query, "content": text_content})
+            return f"Parsed crawl: {parsed}"
         except Exception as e:
-            log_step("WebSearchAgent._crawl_content", f"Crawl failed: {str(e)}")
-            raise WebSearchError(f"Crawl error for {url}: {str(e)}")
+            raise SearchBackendError(f"Crawl/parse failed: {str(e)}")
 
     def execute(self, query: str) -> str:
-        """Execute the web search process with DDG and crawl fallback."""
-        log_step("WebSearchAgent.execute", f"Starting search for: {query}")
+        log_step("WebSearchAgent.execute", f"Query: {query}")
         try:
-            # Attempt DDG search first
-            results = self._perform_ddg_search(query)
-        except WebSearchError:
-            # Fallback to crawling
-            log_step("WebSearchAgent.execute", "Falling back to web crawl due to DDG failure")
+            results = self._perform_search(query)
+        except SearchBackendError:
+            log_step("WebSearchAgent.execute", "Backends failed; crawling...")
             try:
                 crawl_url = self._select_crawl_url(query)
-                results = self._crawl_content(crawl_url)
-            except WebSearchError as e:
-                log_step("WebSearchAgent.execute", f"Crawl fallback failed: {str(e)}")
-                results = f"Error: Could not retrieve data. Fallback suggestion: Check {crawl_url} manually."
-
-        # Process with LLM
+                results = self._crawl_and_parse(crawl_url, query)
+            except SearchBackendError as e:
+                log_step("WebSearchAgent.execute", f"Fallback failed: {str(e)}")
+                results = f"Unable to retrieve. Tip: Search '{query}' on Wikipedia."
+        
         answer = self.chain.invoke({"query": query, "results": results})
-        log_step("WebSearchAgent.execute", f"Generated answer: {answer[:100]}...")
+        log_step("WebSearchAgent.execute", f"Answer: {answer[:100]}...")
         return answer
-
-    def update_crawl_sources(self, category: str, sources: list):
-        """Update or add crawl source domains dynamically."""
-        if category in self.crawl_sources:
-            self.crawl_sources[category] = sources
-        else:
-            self.crawl_sources[category] = sources
-        log_step("WebSearchAgent.update_crawl_sources", f"Updated sources for {category}: {sources}")
